@@ -76,7 +76,15 @@ import java.util.*;
  *
  * <p>This ASM-based implementation avoids reflection and eager class loading in order to
  * interoperate effectively with lazy class loading in a Spring ApplicationContext.
+ * Spring的工具类ConfigurationClassParser用于分析@Configuration注解的配置类，产生一组ConfigurationClass对象。
  *
+ * 分析过程主要是递归分析配置类的注解@Import（比如我们的@EnableWebMvc注解，就@Import(DelegatingWebMvcConfiguration.class)，然后它就是一个@Configuration）
+ * `，配置类内部嵌套类，找出其中所有的配置类，然后返回这组配置类
+ *
+ * 该工具主要由ConfigurationClassPostProcessor使用，而ConfigurationClassPostProcessor是一个BeanDefinitionRegistryPostProcessor/BeanFactoryPostProcessor,
+ * 它会在容器启动过程中，应用上下文上执行各个BeanFactoryPostProcessor时被执行。
+ *
+ * ConfigurationClassParser 所在包 : org.springframework.context.annotation。由此可知，Spring给这个处理器的定位，就是去处理解析相关注解的
  * @author Chris Beams
  * @author Juergen Hoeller
  * @author Phillip Webb
@@ -138,11 +146,16 @@ class ConfigurationClassParser {
 		this.conditionEvaluator = new ConditionEvaluator(registry, environment, resourceLoader);
 	}
 
-
+	/**
+	 * 实例化deferredImportSelectors
+	 * 遍历configCandidates ,进行处理.根据BeanDefinition 的类型 做不同的处理,一般都会调用ConfigurationClassParser#parse 进行解析
+	 * 处理ImportSelect
+	 */
 	public void parse(Set<BeanDefinitionHolder> configCandidates) {
 		for (BeanDefinitionHolder holder : configCandidates) {
 			BeanDefinition bd = holder.getBeanDefinition();
 			try {
+				// 我们使用的注解驱动，所以会到这个parse进来处理。其实内部调用都是processConfigurationClass进行解析的
 				if (bd instanceof AnnotatedBeanDefinition) {
 					parse(((AnnotatedBeanDefinition) bd).getMetadata(), holder.getBeanName());
 				}
@@ -161,7 +174,7 @@ class ConfigurationClassParser {
 						"Failed to parse configuration class [" + bd.getBeanClassName() + "]", ex);
 			}
 		}
-
+		// 最最最后面才处理实现了DeferredImportSelector接口的类，最最后哦~~
 		this.deferredImportSelectorHandler.process();
 	}
 
@@ -195,10 +208,15 @@ class ConfigurationClassParser {
 
 
 	protected void processConfigurationClass(ConfigurationClass configClass) throws IOException {
+		//ConfigurationCondition继承自Condition接口
+		// ConfigurationPhase枚举类型的作用：ConfigurationPhase的作用就是根据条件来判断是否加载这个配置类
+		// 两个值：PARSE_CONFIGURATION 若条件不匹配就不加载此@Configuration
+		// REGISTER_BEAN：无论如何，所有@Configurations都将被解析。
 		if (this.conditionEvaluator.shouldSkip(configClass.getMetadata(), ConfigurationPhase.PARSE_CONFIGURATION)) {
 			return;
 		}
 
+		// 如果这个配置类已经存在了,后面又被@Import进来了~~~会走这里 然后做属性合并~
 		ConfigurationClass existingClass = this.configurationClasses.get(configClass);
 		if (existingClass != null) {
 			if (configClass.isImported()) {
@@ -217,12 +235,14 @@ class ConfigurationClassParser {
 		}
 
 		// Recursively process the configuration class and its superclass hierarchy.
+		// 请注意此处：while递归，只要方法不返回null，就会一直do下去~~~~~~~~
 		SourceClass sourceClass = asSourceClass(configClass);
 		do {
+			// doProcessConfigurationClassz这个方法是解析配置文件的核心方法，此处不做详细分析
 			sourceClass = doProcessConfigurationClass(configClass, sourceClass);
 		}
 		while (sourceClass != null);
-
+		// 保存我们所有的配置类  注意：它是一个LinkedHashMap，所以是有序的  这点还比较重要~~~~和bean定义信息息息相关
 		this.configurationClasses.put(configClass, configClass);
 	}
 
@@ -233,13 +253,21 @@ class ConfigurationClassParser {
 	 * @param configClass the configuration class being build
 	 * @param sourceClass a source class
 	 * @return the superclass, or {@code null} if none found or previously processed
+	 * 解析@Configuration配置文件，然后加载进Bean的定义信息们
+	 * 这个方法非常的重要，可以看到它加载Bean定义信息的一个顺序~~~~
 	 */
 	@Nullable
 	protected final SourceClass doProcessConfigurationClass(ConfigurationClass configClass, SourceClass sourceClass)
 			throws IOException {
 
+		// 先去看看内部类  这个if判断是Spring5.x加上去的，这个我认为还是很有必要的。
+		// 因为@Import、@ImportResource这种属于lite模式的配置类，但是我们却不让他支持内部类了
 		if (configClass.getMetadata().isAnnotated(Component.class.getName())) {
 			// Recursively process any member (nested) classes first
+			// 基本逻辑：内部类也可以有多个（支持lite模式和full模式，也支持order排序）
+			// 若不是被import过的，那就顺便直接解析它（processConfigurationClass（））
+			// 另外：该内部class可以是private  也可以是static~~~(建议用private)
+			// 所以可以看到，把@Bean等定义在内部类里面，是有助于提升Bean的优先级的~~~~~
 			processMemberClasses(configClass, sourceClass);
 		}
 
@@ -280,7 +308,6 @@ class ConfigurationClassParser {
 		/**
 		 * 上面的代码 扫描普通类  component 并且放到了map中
 		 */
-
 		// Process any @Import annotations
 		processImports(configClass, sourceClass, getImports(sourceClass), true);
 
@@ -487,9 +514,13 @@ class ConfigurationClassParser {
 
 	/**
 	 * Returns {@code @Import} class, considering all meta-annotations.
+	 * 这个方法目的是递归去搜集到所有的@Import注解
 	 */
 	private Set<SourceClass> getImports(SourceClass sourceClass) throws IOException {
+		// 装载所有的搜集到的import
 		Set<SourceClass> imports = new LinkedHashSet<>();
+		// 这个集合很有意思：就是去看看所有的内嵌类、以及注解是否有@Import注解
+		// 比如看下面这个截图，会把所有的注解都给翻出来，哪怕是注解的注解
 		Set<SourceClass> visited = new LinkedHashSet<>();
 		collectImports(sourceClass, imports, visited);
 		return imports;
@@ -507,13 +538,26 @@ class ConfigurationClassParser {
 	 * @param imports the imports collected so far
 	 * @param visited used to track visited classes to prevent infinite recursion
 	 * @throws IOException if there is any problem reading metadata from the named class
+	 *
+	 * 我们可以看到在解析到@EnableWebMvc的时候，拿到了它的@Import，拿到DelegatingWebMvcConfiguration，但是我们发现它也还是个@Configuration
+	 *
+	 * 需要注意的是：它的父类WebMvcConfigurationSupport，里面有非常多的@Bean注解的方法，
+	 * 比如RequestMappingHandlerMapping、BeanNameUrlHandlerMapping等等共18个类都会被注册到容器里
+	 * （Spring非常强大，配置文件都会解析父类的@Bean标签），理解了这里，到时候后面讲解为何SpringBoot环境下，
+	 * 若我们写了@EnableWebMvc这个注解，就脱离Spring的管理了 就非常好理解其中的原因了~~~~~~~~~~~~~~
+	 *
+	 * 然后吧这些@Import交给processImports()去处理。进而又会递归式的处理@Configuration文件一样处理(内部也就可以写@Bean之类隐式的给容器注册Bean)。
 	 */
 	private void collectImports(SourceClass sourceClass, Set<SourceClass> imports, Set<SourceClass> visited)
 			throws IOException {
-
+		// 此处什么时候返回true，什么时候返回false，请操作HashMap的put方法的返回值，看什么时候返回null
+		// 答案：put一个新key，返回null。put一个已经存在的key，返回老的value值
+		// 因此此处把add放在if条件里，是比较有技巧性的（若放置的是新的，返回null，若已经存在，就返回的false，不需要用contains()进一步判断了）
 		if (visited.add(sourceClass)) {
 			for (SourceClass annotation : sourceClass.getAnnotations()) {
 				String annName = annotation.getMetadata().getClassName();
+				// 此处不能以java打头，是为了过滤源注解：比如java.lang.annotation.Target这种
+				// 并且这个注解如果已经是Import注解了，那也就停止递归了
 				if (!annName.equals(Import.class.getName())) {
 					collectImports(annotation, imports, visited);
 				}
@@ -666,7 +710,6 @@ class ConfigurationClassParser {
 	}
 
 
-	@SuppressWarnings("serial")
 	private static class ImportStack extends ArrayDeque<ConfigurationClass> implements ImportRegistry {
 
 		private final MultiValueMap<String, AnnotationMetadata> imports = new LinkedMultiValueMap<>();

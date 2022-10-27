@@ -16,14 +16,8 @@
 
 package org.springframework.context.annotation;
 
-import java.io.IOException;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.support.AbstractBeanDefinition;
@@ -38,9 +32,22 @@ import org.springframework.core.type.classreading.MetadataReaderFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 /**
  * Utilities for identifying {@link Configuration} classes.
- *
+ * Full模式和Lite模式的唯一区别：Full模式的配置组件会被enhance（加强/代理），而Liter模式不会。其余使用方式都一样，比如@Bean、@Import等等
+ * 和full模式不同的是，Lite模式不能声明Bean之间的依赖关系。也就是说入参、Java方法调用，都不能达到直接注入的效果。特别是Java方法调用，就直接进方法体了。
+ * 在常见的场景中，@Bean方法将在@Configuration类中声明，确保始终使用“完整”模式，并因此将交叉方法引用重定向到容器的生命周期管理。
+ * 这可以防止@Bean通过常规Java调用意外地调用相同的方法（这也就是为什么我们用方法调用，其实还是去容器里找Bean的原因，并不是新建了一个Bean），
+ * 这有助于减少在“精简”模式下操作时难以跟踪的细微错误。
+ * 只有类上标注@Configuration才是full模式。
+ * 标注有@Component、@ComponentScan、@Import、@ImportResource
+ * 或者啥注解都没标注但是有被标注了@Bean的方法这种也是lite模式
+ * ----------------------------------
  * @author Chris Beams
  * @author Juergen Hoeller
  * @since 3.1
@@ -137,6 +144,8 @@ abstract class ConfigurationClassUtils {
 	 * @param metadata the metadata of the annotated class
 	 * @return {@code true} if the given class is to be registered as a
 	 * reflection-detected bean definition; {@code false} otherwise
+	 *
+	 * 不管是Full模式还是Lite模式，都被认为是候选的配置类  是上面两个方法的结合
 	 */
 	public static boolean isConfigurationCandidate(AnnotationMetadata metadata) {
 		return (isFullConfigurationCandidate(metadata) || isLiteConfigurationCandidate(metadata));
@@ -148,6 +157,10 @@ abstract class ConfigurationClassUtils {
 	 * @param metadata the metadata of the annotated class
 	 * @return {@code true} if the given class is to be processed as a full
 	 * configuration class, including cross-method call interception
+	 * 如果类上有@Configuration注解说明是一个完全（Full）的配置类
+	 * 如果如果类上面有@Component，@ComponentScan，@Import，@ImportResource这些注解，
+	 * 那么就是一个简化配置类。如果不是上面两种情况，那么有@Bean注解修饰的方法也是简化配置类
+	 * 只要这个类标注了：@Configuration注解就行  哪怕是接口、抽象类都木有问题
 	 */
 	public static boolean isFullConfigurationCandidate(AnnotationMetadata metadata) {
 		return metadata.isAnnotated(Configuration.class.getName());
@@ -160,6 +173,10 @@ abstract class ConfigurationClassUtils {
 	 * @param metadata the metadata of the annotated class
 	 * @return {@code true} if the given class is to be processed as a lite
 	 * configuration class, just registering it and scanning it for {@code @Bean} methods
+	 *  判断是Lite模式：（首先肯定没有@Configuration注解）
+	 *  1、不能是接口
+	 *  2、但凡只有标注了一个下面注解，都算lite模式：@Component @ComponentScan @Import @ImportResource
+	 *  3、只存在有一个方法标注了@Bean注解，那就是lite模式
 	 */
 	public static boolean isLiteConfigurationCandidate(AnnotationMetadata metadata) {
 		// Do not consider an interface or an annotation...
