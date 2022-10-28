@@ -73,6 +73,7 @@ public interface BeanDefinition extends AttributeAccessor, BeanMetadataElement {
 	/**
 	 * Role hint indicating that a {@code BeanDefinition} is a major part
 	 * of the application. Typically corresponds to a user-defined bean.
+	 * 用户自定义的bean
 	 */
 	int ROLE_APPLICATION = 0;
 
@@ -236,6 +237,10 @@ public interface BeanDefinition extends AttributeAccessor, BeanMetadataElement {
 	 * Return the constructor argument values for this bean.
 	 * <p>The returned instance can be modified during bean factory post-processing.
 	 * @return the ConstructorArgumentValues object (never {@code null})
+	 *
+	 *  获取此Bean的构造函数参数值们  ConstructorArgumentValues：持有构造函数们的
+	 *  绝大多数情况下是空对象 new ConstructorArgumentValues出来的一个对象
+	 *  当我们Scan实例化Bean的时候，可能用到它的非空构造，这里就会有对应的值了，然后后面就会再依赖注入了
 	 */
 	ConstructorArgumentValues getConstructorArgumentValues();
 
@@ -350,6 +355,8 @@ public interface BeanDefinition extends AttributeAccessor, BeanMetadataElement {
 	/**
 	 * Return a description of the resource that this bean definition
 	 * came from (for the purpose of showing context in case of errors).
+	 *
+	 * 返回该Bean定义来自于的资源的描述（用于在出现错误时显示上下文）
 	 */
 	@Nullable
 	String getResourceDescription();
@@ -359,6 +366,9 @@ public interface BeanDefinition extends AttributeAccessor, BeanMetadataElement {
 	 * Allows for retrieving the decorated bean definition, if any.
 	 * <p>Note that this method returns the immediate originator. Iterate through the
 	 * originator chain to find the original BeanDefinition as defined by the user.
+	 *
+	 * 返回原始BeanDefinition，如果没有则返回@null
+	 * 若这个Bean定义被代理、修饰过  这个方法可以返回原始的
 	 */
 	@Nullable
 	BeanDefinition getOriginatingBeanDefinition();

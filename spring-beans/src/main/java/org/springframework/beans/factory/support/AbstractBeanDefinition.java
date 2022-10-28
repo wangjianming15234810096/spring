@@ -29,6 +29,7 @@ import org.springframework.util.ClassUtils;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 
+import javax.swing.*;
 import java.lang.reflect.Constructor;
 import java.util.*;
 import java.util.function.Supplier;
@@ -40,8 +41,18 @@ import java.util.function.Supplier;
  * 		AnnotatedGenericBeanDefinition
  * 	 	ScannedGenericBeanDefinition
  * 	RootBeanDefinition  充当模板 普通bean 不能充当子类
- * 	ConfigurationClassBeanDefinition
  *
+ *  AnnotatedBeanDefinition接口
+ *      ScannedGenericBeanDefinition  @Component、@Service、@Controller
+ *		AnnotatedGenericBeanDefinition 只能用于已经被注册或被扫描到的类 它使用得非常的多。因为获取注解信息非常的方便~
+ *		ConfigurationClassBeanDefinition  它是ConfigurationClassBeanDefinitionReader的一个私有的静态内部类：
+ *		这个类负责将@Bean注解的方法转换为对应的ConfigurationClassBeanDefinition类（非常的重要）
+ *
+ *	    它有一些默认的设置处理如下：
+ *
+ * 		如果@Bean注解没有指定bean的名字，默认会用方法的名字命名
+ * 		 bean @Configuration注解的类会成为一个工厂类，而所有的@Bean注解的方法会成为工厂方法，通过工厂方法实例化Bean，
+ * 		而不是直接通过构造函数初始化（所以我们方法体里面可以很方便的书写逻辑。。。）
  *
  * Base class for concrete, full-fledged {@link BeanDefinition} classes,
  * factoring out common properties of {@link GenericBeanDefinition},
@@ -104,18 +115,21 @@ public abstract class AbstractBeanDefinition extends BeanMetadataAttributeAccess
 	public static final int AUTOWIRE_AUTODETECT = AutowireCapableBeanFactory.AUTOWIRE_AUTODETECT;
 
 	/**
+	 * 检查依赖是否合法，在本类中，默认不进行依赖检查
 	 * Constant that indicates no dependency check at all.
 	 * @see #setDependencyCheck
 	 */
 	public static final int DEPENDENCY_CHECK_NONE = 0;
 
 	/**
+	 * 如果依赖类型为对象引用，则需要检查
 	 * Constant that indicates dependency checking for object references.
 	 * @see #setDependencyCheck
 	 */
 	public static final int DEPENDENCY_CHECK_OBJECTS = 1;
 
 	/**
+	 * 对简单属性的依赖进行检查
 	 * Constant that indicates dependency checking for "simple" properties.
 	 * @see #setDependencyCheck
 	 * @see org.springframework.beans.BeanUtils#isSimpleProperty
@@ -123,6 +137,7 @@ public abstract class AbstractBeanDefinition extends BeanMetadataAttributeAccess
 	public static final int DEPENDENCY_CHECK_SIMPLE = 2;
 
 	/**
+	 * 对所有属性的依赖进行检查
 	 * Constant that indicates dependency checking for all properties
 	 * (object references as well as "simple" properties).
 	 * @see #setDependencyCheck
@@ -138,10 +153,12 @@ public abstract class AbstractBeanDefinition extends BeanMetadataAttributeAccess
 	 * name.
 	 * <p>Currently, the method names detected during destroy method inference
 	 * are "close" and "shutdown", if present on the specific bean class.
+	 *
+	 * 若Bean未指定销毁方法，容器应该尝试推断Bean的销毁方法的名字，目前来说，推断的销毁方法的名字一般为close或是shutdown
 	 */
 	public static final String INFER_METHOD = "(inferred)";
 
-
+	//Bean的class对象或是类的全限定名
 	@Nullable
 	private volatile Object beanClass;
 
@@ -155,41 +172,39 @@ public abstract class AbstractBeanDefinition extends BeanMetadataAttributeAccess
 	private int autowireMode = AUTOWIRE_NO;
 	//默认不做依赖检查
 	private int dependencyCheck = DEPENDENCY_CHECK_NONE;
-
+	// @@DependsOn 默认没有
 	@Nullable
 	private String[] dependsOn;
-
+	// autowire-candidate属性设置为false，这样容器在查找自动装配对象时，将不考虑该bean，
+	// 备注：并不影响本身注入其它的Bean
 	private boolean autowireCandidate = true;
 
 	private boolean primary = false;
 
 	private final Map<String, AutowireCandidateQualifier> qualifiers = new LinkedHashMap<>();
 
+	//我理解为通过这个函数的逻辑初始化Bean，而不是构造函数或是工厂方法（相当于自己去实例化，而不是交给Bean工厂）
 	@Nullable
 	private Supplier<?> instanceSupplier;
 
-	/**
-	 * 允许访问非公开方法 构造方法
-	 */
+	//是否允许访问非public方法和属性，应用于构造函数、工厂方法、init、destroy方法的解析 默认是true，表示啥都可以访问
 	private boolean nonPublicAccessAllowed = true;
 
-	/**
-	 * 调用构造方法采用宽松匹配
-	 */
+	// 是否以一种宽松的模式解析构造函数，默认为true（宽松和严格体现在类型匹配上）
 	private boolean lenientConstructorResolution = true;
-
+	//工厂类名（注意是String类型，不是Class类型） 对应bean属性factory-method
 	@Nullable
 	private String factoryBeanName;
-
+	//工厂方法名（注意是String类型，不是Method类型）
 	@Nullable
 	private String factoryMethodName;
-
+	//记录构造函数注入属性，对应bean属性constructor-arg
 	@Nullable
 	private ConstructorArgumentValues constructorArgumentValues;
-
+	//Bean属性的名称以及对应的值，这里不会存放构造函数相关的参数值，只会存放通过setter注入的依赖
 	@Nullable
 	private MutablePropertyValues propertyValues;
-
+	//方法重写的持有者，记录lookup-method、replaced-method元素  @Lookup等
 	private MethodOverrides methodOverrides = new MethodOverrides();
 
 	@Nullable
@@ -197,11 +212,12 @@ public abstract class AbstractBeanDefinition extends BeanMetadataAttributeAccess
 
 	@Nullable
 	private String destroyMethodName;
-
+	//是否执行init-method，程序设置
 	private boolean enforceInitMethod = true;
 
 	private boolean enforceDestroyMethod = true;
-
+	//是否是合成类（是不是应用自定义的，例如生成AOP代理时，会用到某些辅助类，这些辅助类不是应用自定义的，这个就是合成类）
+	//创建AOP时候为true
 	private boolean synthetic = false;
 
 	private int role = BeanDefinition.ROLE_APPLICATION;
