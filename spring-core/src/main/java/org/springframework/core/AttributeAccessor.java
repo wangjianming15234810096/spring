@@ -23,6 +23,7 @@ import org.springframework.lang.Nullable;
  * to/from arbitrary objects.
  * 提供对beanDefinition补充说明 总有一些额外信息是beanDefinition没有
  * 提前定义好的，此时可以用该类进行扩展。
+ * AttributeAccessorSupport 是唯一实现
  * @author Rob Harrop
  * @since 2.0
  */

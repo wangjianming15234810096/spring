@@ -1,0 +1,15 @@
+ConfigurationClassPostProcessor
+    处理Configuration注解
+ConfigurationClassPostProcessor#postProcessBeanDefinitionRegistry()
+    @Configuration，@Import，@ImportResource和类内部的@Bean
+AutowiredAnnotationBeanPostProcessor
+    @Autowired和@Value
+RequiredAnnotationBeanPostProcessor
+    @Required
+
+CommonAnnotationBeanPostProcessor
+    JSR-250规范注解的支持@javax.annotation.Resource、@javax.annotation.PostConstruct和@javax.annotation.PreDestroy等的支持。
+
+EventListenerMethodProcessor
+    EventListenerMethodProcessor提供@ EventListener  的支持。
+    @ EventListener在spring4.2之后出现的，可以在一个Bean的方法上使用@EventListener注解来自动注册一个ApplicationListener。
