@@ -60,6 +60,10 @@ import org.springframework.core.io.support.ResourcePatternResolver;
  */
 public class ResourceEditorRegistrar implements PropertyEditorRegistrar {
 
+	/**
+	 * resourceLoader：		一般传入ApplicationContext
+	 * propertyResolver：	一般传入Environment
+	 */
 	private final PropertyResolver propertyResolver;
 
 	private final ResourceLoader resourceLoader;

@@ -1,0 +1,198 @@
+早期的编辑器
+    PropertyEditor 作用类似于一个转换器：编辑某个属性然后经过它转换成合适的类型。
+        PropertyEditorSupport  唯一实现  线程不安全
+            PropertyEditor实现的是双向类型转换：String和Object互转。调用setValue()方法后，
+            需要先“缓存”起来后续才能够使用（输出）。PropertyEditorSupport为此提供了一个成员属性来做： private Object value;
+            这么一来PropertyEditorSupport就是有状态的了，因此是线程不安全的。在使用过程中需要特别注意，避免出现并发风险
+    设计缺陷:
+
+        职责不单一：该接口有非常多的方法，但只用到2个而已
+        类型不安全：setValue()方法入参是Object，getValue()返回值是Object，依赖于约定好的类型强转，不安全
+        线程不安全：依赖于setValue()后getValue()，实例是线程不安全的
+        语义不清晰：从语义上根本不能知道它是用于类型转换的组件
+        只能用于String类型：它只能进行String <-> 其它类型的转换，而非更灵活的Object <-> Object
+
+xxxRegistry用于管理（注册、修改、删除、查找）一类组件，当组件类型较多时使用注册中心统一管理是一种非常有效的手段。
+诚然，PropertyEditor就属于这种场景，管理它们的注册中心是PropertyEditorRegistry。它是管理PropertyEditor的中
+心接口，负责注册、查找对应的PropertyEditor。
+    PropertyEditorRegistrySupport
+    它是PropertyEditorRegistry接口的实现，提供对default editors和custom editors的管理，最终主要为BeanWrapperImpl和DataBinder服务。
+
+PropertyEditorRegistrar 登记员。它一般和xxxRegistry配合使用，其实内核还是Registry，只是运用了倒排思想屏蔽一些内部实现而已
+    ResourceEditorRegistrar唯一实现
+    它的设计就是服务于ApplicationContext上下文，在Bean创建过程中辅助BeanWrapper实现资源加载、转换
+    BeanFactory在初始化的准备过程中就将它实例化，从而具备资源处理能力在prepareBeanFactory()方法中
+    这也是PropertyEditorRegistrar在Spring Framework的唯一使用处，值得关注
+
+PropertyEditor自动发现机制
+    1.为自定义类型写好一个xxxPropertyEditor（实现PropertyEditor接口）
+    2.将写好的编辑器注册到注册中心PropertyEditorRegistry
+显然步骤1属个性化行为无法替代，但步骤2属于标准行为，重复劳动是可以标准化的。自动发现机制就是用来解决此问题，对自定义的编辑器制定了如下标准：
+
+实现了PropertyEditor接口，具有空构造器
+与自定义类型同包（在同一个package内），名称必须为：targetType.getName() + "Editor"
+这样你就无需再手动注册到注册中心了（当然手动注册了也不碍事），Spring能够自动发现它，这在有大量自定义类型编辑器的需要的时候将很有用。
+此段核心逻辑在BeanUtils#findEditorByConvention()
+
+
+为了解决PropertyEditor作为类型转换方式的设计缺陷，Spring 3.0版本重新设计了一套类型转换接口
+
+    1.Converter<S, T>：Source -> Target类型转换接口，适用于1:1转换
+        StringToPropertiesConverter 将String类型转换为Properties
+        Converter用于解决1:1的任意类型转换，因此它必然存在一个不足：解决1:N转换问题需要写N遍，造成重复冗余代码。
+    2.ConverterFactory<S, R>：Source -> R类型转换接口，适用于1:N转换
+        StringToEnumConverterFactory：将String类型转任意Enum
+        StringToNumberConverterFactory：将String类型转为任意数字
+        从名称上看它代表一个转换工厂：可以将对象S转换为R的所有子类型，从而形成1:N的关系
+        既然有了1:1、1:N，自然就有N:N。比如集合转换、数组转换、Map到Map的转换等等，这些N:N的场景，就需要借助下一个接口GenericConverter来实现。
+    3.GenericConverter 更为通用的类型转换接口，适用于N:N转换
+        ObjectToCollectionConverter：任意集合类型转为任意集合类型（如List<String>转为List<Integer> / Set<Integer>都使用此转换器）
+
+            StreamConverter：将Stream流与集合/数组之间的转换，必要时转换元素类型
+            ObjectToObjectConverter：通用的将原对象转换为目标对象（通过工厂方法or构造器） 165有注释
+                它支持的是Object -> Object，看似没有限制但其实是有约定条件的
+                @Data
+                public class Customer {
+                    private Long id;
+                    private String address;
+
+                    public Person toPerson() {
+                        Person person = new Person();
+                        person.setId(getId());
+                        person.setName("YourBatman-".concat(getAddress()));
+                        return person;
+                    }
+
+                }
+
+                // tartgetClass
+                @Data
+                public class Person {
+                    private Long id;
+                    private String name;
+
+                    //静态工厂方法 valueOf、of、from
+                    public static Person valueOf(Customer customer) {
+                            Person person = new Person();
+                            person.setId(customer.getId());
+                            person.setName("YourBatman-".concat(customer.getAddress()));
+                            return person;
+                    }
+                }
+
+                public void test4() {
+                    System.out.println("----------------ObjectToObjectConverter---------------");
+                    ConditionalGenericConverter converter = new ObjectToObjectConverter();
+
+                    Customer customer = new Customer();
+                    customer.setId(1L);
+                    customer.setAddress("Peking");
+
+                    Object convert = converter.convert(customer, TypeDescriptor.forObject(customer), TypeDescriptor.valueOf(Person.class));
+                    System.out.println(convert);
+
+                    // ConversionService方式（实际使用方式）
+                    ConversionService conversionService = new DefaultConversionService();
+                    Person person = conversionService.convert(customer, Person.class);
+                    System.out.println(person);
+                }
+            IdToEntityConverter：本文重点。给个ID自动帮你兑换成一个Entity对象
+                Id(S) --> Entity(T)。通过调用静态查找方法将实体ID兑换为实体对象。
+                Entity里的该查找方法需要满足如下条件find[EntityName]([IdType])：
+                必须是static静态方法
+                方法名必须为find + entityName。如Person类的话，那么方法名叫findPerson
+                方法参数列表必须为1个
+                返回值类型必须是Entity类型
+                public class Person {
+
+                    private Long id;
+                    private String name;
+
+                    /**
+                     * 根据ID定位一个Person实例
+                     */
+                    public static Person findPerson(Long id) {
+                        // 一般根据id从数据库查，本处通过new来模拟
+                        Person person = new Person();
+                        person.setId(id);
+                        person.setName("YourBatman-byFindPerson");
+                        return person;
+                    }
+
+                }
+
+                 System.out.println("----------------IdToEntityConverter---------------");
+                 ConditionalGenericConverter converter = new IdToEntityConverter(new DefaultConversionService());
+                 TypeDescriptor sourceTypeDesp = TypeDescriptor.valueOf(String.class);
+                 TypeDescriptor targetTypeDesp = TypeDescriptor.valueOf(Person.class);
+                 boolean matches = converter.matches(sourceTypeDesp, targetTypeDesp);
+                 System.out.println("是否能够转换：" + matches);
+                 // 执行转换
+                 Object convert = converter.convert("1", sourceTypeDesp, targetTypeDesp);
+                 System.out.println(convert);
+            FallbackObjectToStringConverter：将任何对象调用toString()转化为String类型。当匹配不到任何转换器时，它用于兜底，
+            ObjectToObjectConverter不处理任何String类型的转换，原来都是交给它了
+
+    4.ConditionalConverter：条件转换接口。可跟上面3个接口组合使用，提供前置条件判断验证
+        ConditionalGenericConverter是GenericConverter和条件接口ConditionalConverter的组合，
+        作用是在执行GenericConverter转换时增加一个前置条件判断方法。
+                ConditionalGenericConverter conditionalGenericConverter = new CollectionToCollectionConverter(new DefaultConversionService());
+        		// 将Collection转为Collection（注意：没有指定泛型类型哦）
+        		System.out.println(conditionalGenericConverter.getConvertibleTypes());
+
+        		List<String> sourceList = Arrays.asList("1", "2", "2", "3", "4");
+        		TypeDescriptor sourceTypeDesp = TypeDescriptor.collection(List.class, TypeDescriptor.valueOf(String.class));
+        		TypeDescriptor targetTypeDesp = TypeDescriptor.collection(Set.class, TypeDescriptor.valueOf(Integer.class));
+
+        		System.out.println(conditionalGenericConverter.matches(sourceTypeDesp, targetTypeDesp));
+        		Object convert = conditionalGenericConverter.convert(sourceList, sourceTypeDesp, targetTypeDesp);
+        		System.out.println(convert.getClass());
+        		System.out.println(convert);
+
+重新设计的这套接口，解决了PropertyEditor做类型转换存在的所有缺陷，且具有非常高的灵活性和可扩展性。
+但是，每个接口独立来看均具有一定的局限性，只有使用组合拳方才有最大威力
+
+Converter、ConverterFactory、GenericConverter它们三都着力于完成类型转换。对于使用者而言，
+如果做个类型转换需要了解到这三套体系无疑成本太高，因此就有了ConversionService用于整合它们三，统一化接口操作。
+
+按照Spring的设计习惯，必有一个注册中心来统一管理，负责它们的注册、删除等，它就是ConverterRegistry。
+ConverterRegistry：转换器注册中心。负责转换器的注册、删除
+ConversionService：统一的类型转换服务。属于面向开发者使用的门面接口
+ConfigurableConversionService：上两个接口的组合接口
+GenericConversionService：上个接口的实现，实现了注册管理、转换服务的几乎所有功能，是个实现类而非抽象类
+DefaultConversionService：继承自GenericConversionService，在其基础上注册了一批默认转换器（Spring内建），从而具备基础转换能力，能解决日常绝大部分场景
+
+此接口也是Spring 3.0新增，用于统一化 底层类型转换实现的差异，对外提供统一服务，所以它也被称作类型转换的门面接口，
+从接口名称xxxService也能看出来其设计思路。它主要有两大实现：
+1.GenericConversionService：提供模版实现，如转换器的注册、删除、匹配查找等，但并不内置转换器实现
+2.DefaultConversionService：继承自GenericConversionService。在它基础上默认注册了非常多的内建的转换器实现，
+从而能够实现绝大部分的类型转换需求
+3.Spring新一代类型转换内建了非常多的实现，这些在初始化阶段大都被默认注册进去。注册点在DefaultConversionService提供的一个static静态工具方法addDefaultConverters()里：
+4.转换器的注册顺序非常重要，这决定了通用转换器的匹配结果（谁在前，优先匹配谁）。
+
+
+ConversionService转换服务它贯穿于Spring上下文ApplicationContext的多项功能，包括但不限于：BeanWrapper处理Bean属性、
+DataBinder数据绑定、PropertySource外部化属性处理等等
+
+很多小伙伴问WebConversionService是什么场景下使用？我说：它并非Spirng Framework的API，
+而属于Spring Boot提供的增强，且起始于2.x版本，这点需引起注意
+
+Spring 3.0还新增了一个Formatter<T>接口，作用为：将Object格式化为类型T。从语义上理解它也具有类型转换（数据转换的作用），
+相较于Converter<S,T>它强调的是格式化，因此一般用于时间/日期、数字（小数、分数、科学计数法等等）、货币等场景，举例它的实现：
+DurationFormatter：字符串和Duration类型的互转
+CurrencyUnitFormatter：字符串和javax.money.CurrencyUnit货币类型互转
+DateFormatter：字符串和java.util.Date类型互转。这个就使用得太多了，它默认支持什么格式？支持哪些输出方式，这将在后文详细描述
+
+为了和类型转换服务ConversionService完成整合，对外只提供统一的API。Spring提供了FormattingConversionService专门用于整合Converter和Formatter，
+从而使得两者具有一致的编程体验，对开发者更加友好。
+
+ConvertingPropertyEditorAdapter：位于org.springframework.core.convert.support。将3.0新增的ConversionService转换服务适配为一个
+PropertyEditor，内部转换动作都委托给前者去完成。
+AbstractPropertyBindingResult#findEditor()为属性寻找合适PropertyEditor的时候，
+若ConversionService能支持就包装为ConvertingPropertyEditorAdapter供以使用，这是适配器模式的典型应用场景。
+
+
+
+
+
+

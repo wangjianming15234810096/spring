@@ -93,6 +93,7 @@ public class DefaultConversionService extends GenericConversionService {
 		converterRegistry.addConverter(new ZoneIdToTimeZoneConverter());
 		converterRegistry.addConverter(new ZonedDateTimeToCalendarConverter());
 
+		// 4、添加兜底转换器（上面处理不了的全交给这几个哥们处理）
 		converterRegistry.addConverter(new ObjectToObjectConverter());
 		converterRegistry.addConverter(new IdToEntityConverter((ConversionService) converterRegistry));
 		converterRegistry.addConverter(new FallbackObjectToStringConverter());

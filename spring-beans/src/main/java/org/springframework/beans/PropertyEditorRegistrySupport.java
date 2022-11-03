@@ -78,6 +78,11 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.ClassUtils;
 
 /**
+ * 默认编辑器组：		defaultEditors和	overriddenDefaultEditors
+ * 	overriddenDefaultEditors优先级 高于 defaultEditors
+ * 自定义编辑器组：	customEditors和		customEditorsForPath
+ * 它俩为互斥关系
+ *
  * Base implementation of the {@link PropertyEditorRegistry} interface.
  * Provides management of default editors and custom editors.
  * Mainly serves as base class for {@link BeanWrapperImpl}.
@@ -98,9 +103,15 @@ public class PropertyEditorRegistrySupport implements PropertyEditorRegistry {
 
 	private boolean configValueEditorsActive = false;
 
+	/**
+	 * 默认编辑器  会注册50+种
+	 */
 	@Nullable
 	private Map<Class<?>, PropertyEditor> defaultEditors;
 
+	/**
+	 * 调用api overriddenDefaultEditor  优先级高于  defaultEditors
+	 */
 	@Nullable
 	private Map<Class<?>, PropertyEditor> overriddenDefaultEditors;
 
@@ -110,6 +121,32 @@ public class PropertyEditorRegistrySupport implements PropertyEditorRegistry {
 	@Nullable
 	private Map<String, CustomEditorHolder> customEditorsForPath;
 
+	/**
+	 * customEditorCache用于缓存自定义的编辑器，辅以成员属性customEditors属性一起使用
+	 *
+	 * 具体（唯一）使用方式在私有方法：根据类型获取自定义编辑器PropertyEditorRegistrySupport#getCustomEditor
+	 *
+	 * 因为遍历customEditors属于比较重的操作（复杂度为O(n)），从而使用了customEditorCache避免每次出现父子类的匹配情况
+	 * 就去遍历一次，大大提高匹配效率。
+	 * customEditorCache的作用可总结为一句话：帮助customEditors属性装载
+	 * 已匹配上的子类型的编辑器，从而避免了每次全部遍历，有效的提升了匹配效率。
+	 *
+	 * 值得注意的是，每次调用API向customEditors添加新元素时，customEditorCache就会被清空，
+	 * 因此因尽量避免在运行期注册编辑器，以避免缓存失效而降低性能
+	 *
+	 * public abstract class Animal {
+	 *     private Long id;
+	 *     private String name;
+	 * }
+	 *
+	 * public class Cat extends Animal {
+	 *
+	 * }
+	 *
+	 * propertyEditorRegistry.registerCustomEditor(Animal.class, new AnimalPropertyEditor())
+	 *
+	 * customEditorCache 里面存储的就是 <Cat,AnimalPropertyEditor>
+	 */
 	@Nullable
 	private Map<Class<?>, PropertyEditor> customEditorCache;
 

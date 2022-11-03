@@ -131,11 +131,39 @@ final class ObjectToObjectConverter implements ConditionalGenericConverter {
 
 	@Nullable
 	private static Member getValidatedMember(Class<?> targetClass, Class<?> sourceClass) {
+		/*
+		part1：从缓存中拿到Member，直接判断Member的可用性，可用的话迅速返回
+		part2：若part1没有返回，就执行三部曲，尝试找到一个合适的Member，然后放进缓存内（若没有就返回null）
+
+		当不是首次进入处理时，会走快速返回流程。也就是第0步isApplicable判断逻辑，有这几个关注点
+			Member包括Method或者Constructor
+			Method：若是static静态方法，要求方法的第1个入参类型必须是源类型sourceType；
+			若不是static方法，则要求源类型sourceType必须是method.getDeclaringClass()的子类型/相同类型
+
+			Constructor：要求构造器的第1个入参类型必须是源类型sourceType
+		 */
 		Member member = conversionMemberCache.get(targetClass);
 		if (isApplicable(member, sourceClass)) {
 			return member;
 		}
 
+		/*
+		 	对于首次处理的转换，就会进入到详细的三部曲逻辑：通过反射尝试找到合适的Member用于创建目标实例，也就是上图的1、2、3步
+			step1：determineToMethod，从sourceClass里找实例方法，对方法有如下要求：
+
+			方法名必须叫"to" + targetClass.getSimpleName()，如toPerson()
+			方法的访问权限必须是public
+			该方法的返回值必须是目标类型或其子类型
+			step2：determineFactoryMethod，找静态工厂方法，对方法有如下要求：
+
+			方法名必须为valueOf(sourceClass) 或者 of(sourceClass) 或者from(sourceClass)
+			方法的访问权限必须是public
+			step3：determineFactoryConstructor，找构造器，对构造器有如下要求：
+			存在一个参数，且参数类型是sourceClass类型的构造器
+			构造器的访问权限必须是public
+			特别值得注意的是：此转换器不支持Object.toString()方法将sourceType转换为java.lang.String。对于toString()支持，
+			请使用下面介绍的更为兜底的FallbackObjectToStringConverter。
+		 */
 		member = determineToMethod(targetClass, sourceClass);
 		if (member == null) {
 			member = determineFactoryMethod(targetClass, sourceClass);
