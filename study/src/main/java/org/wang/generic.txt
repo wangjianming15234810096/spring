@@ -1,0 +1,30 @@
+Type
+    GenericArrayType    数组类型
+        并不是我们工作中所使用的数组String[] 、byte[]（这种都属于Class），
+        而是带有泛型的数组，即T[]   泛型数组
+        返回泛型数组中元素的Type类型，即List<String>[] 中的 List<String>
+        List<String>[] pTypeArray, T[] vTypeArray
+        genericArrayType.getGenericComponentType()返回的类型为ParameterizedTypeImpl类型，能够获取到数组的实际参数类型
+    ParameterizedType   参数化类型
+        参数化类型，即泛型；例如：List<T>、Map<K,V>等带有参数化的对象
+        //获取类型内部的参数化类型 比如Map<K,V>里面的K，V类型
+        Type[] getActualTypeArguments();
+        // 类的原始类型，一般都是Class
+        Type getRawType();
+        // 获取所有者类型（只有内部类才有所有者，比如Map.Entry他的所有者就是Map），若不是内部类，此处返回null
+        Type getOwnerType();
+    WildcardType        泛型表达式类型
+        List< ? extends Number>这种
+    TypeVariable        类型变量
+        List<T> 中的T等
+    Class               原始/基本类型 也叫raw type
+        Type的直接子类只有一个，也就是Class，代表着类型中的原始类型以及基本类型
+        不仅仅包含我们平常所指的类、枚举、数组、注解，还包括基本类型int、float等等
+        String[] strings, Main[] test
+ Type的直接子类只有一个，也就是Class，代表着类型中的原始类型以及基本类型。
+
+ List<T ? entends>[]：这里的List就是ParameterizedType，T就是TypeVariable，
+ T ? entends就是WildcardType（注意，WildcardType不是Java类型，而是一个表达式），
+ 整个List<T ? entends>[]就是GenericArrayType
+
+
